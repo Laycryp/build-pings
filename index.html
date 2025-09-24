@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Proof-of-Build Pings</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    input, button { padding: 10px 12px; margin: 6px 6px 6px 0; }
+    input { width: 100%; box-sizing: border-box; }
+    pre { background:#111; color:#eee; padding:12px; border-radius:8px; overflow:auto; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .pill { background:#111; color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>Proof-of-Build Pings</h1>
+  <p>
+    Network: <b>Base Mainnet</b>
+    <span class="pill">Chain ID: 8453</span>
+    · Contract: <code id="addr">0x382f71b8e65a4f1ba863fa4d8e258bbfcb55d4b1</code>
+    · <a id="addrLink" target="_blank" rel="noopener">Open on BaseScan</a>
+  </p>
+
+  <div class="row">
+    <button id="connect">Connect Wallet</button>
+    <button id="refresh">Refresh Stats</button>
+  </div>
+
+  <input id="what" placeholder='e.g. "Shipped v0.1"' maxlength="144"/>
+  <button id="send">Send Ping</button>
+
+  <h3>Your Stats</h3>
+  <pre id="stats">—</pre>
+
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
+  <script>
+    // ==== Config ====
+    const CONTRACT_ADDRESS = "0x382f71b8e65a4f1ba863fa4d8e258bbfcb55d4b1";
+    const BASE_CHAIN_HEX = "0x2105"; // 8453
+    const BASE_RPC = "https://mainnet.base.org";
+    const BASESCAN = "https://basescan.org";
+
+    const ABI = [
+      {"inputs":[{"internalType":"string","name":"what","type":"string"}],"name":"ping","outputs":[],"stateMutability":"nonpayable","type":"function"},
+      {"inputs":[{"internalType":"address","name":"user","type":"address"}],"name":"getStats","outputs":[{"internalType":"uint64","name":"lastAt","type":"uint64"},{"internalType":"uint32","name":"count","type":"uint32"}],"stateMutability":"view","type":"function"},
+      {"anonymous":false,"inputs":[
+        {"indexed":true,"internalType":"address","name":"user","type":"address"},
+        {"indexed":false,"internalType":"string","name":"what","type":"string"},
+        {"indexed":false,"internalType":"uint64","name":"timestamp","type":"uint64"},
+        {"indexed":false,"internalType":"uint32","name":"total","type":"uint32"}],
+        "name":"Ping","type":"event"}
+    ];
+
+    // ==== Globals ====
+    let provider, signer, contract, account;
+
+    // Contract link
+    document.getElementById("addrLink").href = `${BASESCAN}/address/${CONTRACT_ADDRESS}`;
+
+    // Choose MetaMask if multiple providers exist
+    function selectEthereum() {
+      if (!window.ethereum) return null;
+      return window.ethereum.providers
+        ? (window.ethereum.providers.find(p => p.isMetaMask) || window.ethereum)
+        : window.ethereum;
+    }
+
+    async function ensureBase(eth) {
+      const chainId = await eth.request({ method: "eth_chainId" });
+      if (chainId !== BASE_CHAIN_HEX) {
+        try {
+          await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_HEX }] });
+        } catch (e) {
+          if (e.code === 4902) {
+            await eth.request({
+              method: "wallet_addEthereumChain",
+              params: [{
+                chainId: BASE_CHAIN_HEX,
+                chainName: "Base",
+                nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                rpcUrls: [BASE_RPC],
+                blockExplorerUrls: [BASESCAN]
+              }]
+            });
+          } else {
+            throw e;
+          }
+        }
+      }
+    }
+
+    async function connect() {
+      const eth = selectEthereum();
+      if (!eth) { alert("Install MetaMask"); return; }
+      await eth.request({ method: "eth_requestAccounts" });
+      await ensureBase(eth);
+
+      provider = new ethers.BrowserProvider(eth);
+      signer = await provider.getSigner();
+      account = await signer.getAddress();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+      await refresh();
+      alert("Connected: " + account);
+    }
+
+    async function sendPing() {
+      if (!contract) { alert("Connect first"); return; }
+      const what = document.getElementById("what").value.trim();
+      if (!what) { alert("Message required"); return; }
+      const tx = await contract.ping(what);
+      await tx.wait();
+      document.getElementById("what").value = "";
+      alert("Ping sent! Tx: " + tx.hash);
+      await refresh();
+    }
+
+    async function refresh() {
+      if (!contract || !account) { document.getElementById("stats").textContent = "—"; return; }
+      const [lastAt, count] = await contract.getStats(account);
+      const ts = Number(lastAt) ? new Date(Number(lastAt) * 1000).toISOString() : "—";
+      document.getElementById("stats").textContent =
+        JSON.stringify({ address: account, lastAt: ts, count: Number(count) }, null, 2);
+    }
+
+    // Bind UI
+    document.getElementById("connect").onclick = connect;
+    document.getElementById("send").onclick = sendPing;
+    document.getElementById("refresh").onclick = refresh;
+  </script>
+</body>
+</html>
